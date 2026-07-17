@@ -32,18 +32,21 @@ app.use(cookieParser());
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests from the configured FRONTEND_URL, any localhost, or no-origin (curl/Postman)
-      const allowed = [
-        process.env.FRONTEND_URL || "http://localhost:5173",
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://localhost:4173",
-      ];
-      if (!origin || allowed.includes(origin) || /^http:\/\/localhost:\d+$/.test(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("CORS: origin not allowed → " + origin));
-      }
+      // Allow no-origin (curl/Postman/server-to-server)
+      if (!origin) return callback(null, true);
+
+      // Allow any localhost port in dev
+      if (/^http:\/\/localhost:\d+$/.test(origin)) return callback(null, true);
+
+      // Allow any Vercel deployment of this project (preview + production URLs)
+      // Covers: rentconnect-frontend-delta.vercel.app, rentconnect-by-karansinhdesai-*.vercel.app, etc.
+      if (/^https:\/\/.*\.vercel\.app$/.test(origin)) return callback(null, true);
+
+      // Allow the explicitly configured FRONTEND_URL (for custom domains)
+      const frontendUrl = process.env.FRONTEND_URL;
+      if (frontendUrl && origin === frontendUrl) return callback(null, true);
+
+      callback(new Error("CORS: origin not allowed → " + origin));
     },
     credentials: true,
   })
