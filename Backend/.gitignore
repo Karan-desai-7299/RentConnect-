@@ -17,3 +17,5 @@ pids/
 
 # Build artifacts
 dist/
+
+.vercel
