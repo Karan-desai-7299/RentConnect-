@@ -6,11 +6,22 @@ const compression = require("compression");
 const morgan = require("morgan");
 const cookieParser = require("cookie-parser");
 const rateLimit = require("express-rate-limit");
+const connectDB = require("./db/db");
 
 // Load Environment Variables
 dotenv.config();
 
 const app = express();
+
+// Database connection middleware for Serverless environment
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Middlewares
 app.use(helmet());
