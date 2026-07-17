@@ -2,6 +2,34 @@ const Message = require("../models/message.model");
 const User = require("../models/user.model");
 const { success, error } = require("../utils/apiResponse");
 
+// @desc    Send a message via REST API (Vercel serverless-safe fallback)
+// @route   POST /api/v1/chat/send
+// @access  Private
+const sendMessage = async (req, res) => {
+  try {
+    const senderId = req.user._id;
+    const { receiverId, text } = req.body;
+
+    if (!receiverId || !text || !text.trim()) {
+      return error(res, "receiverId and text are required", 400);
+    }
+
+    // Verify receiver exists
+    const receiver = await User.findById(receiverId).select("_id");
+    if (!receiver) return error(res, "Receiver not found", 404);
+
+    const message = await Message.create({
+      sender: senderId,
+      receiver: receiverId,
+      text: text.trim(),
+    });
+
+    return success(res, message, 201);
+  } catch (err) {
+    return error(res, err.message, 500);
+  }
+};
+
 // @desc    Get message history between logged in user and another user
 // @route   GET /api/v1/chat/history/:otherUserId
 // @access  Private
@@ -162,6 +190,7 @@ const getUnreadCount = async (req, res) => {
 };
 
 module.exports = {
+  sendMessage,
   getChatHistory,
   getConversations,
   getUnreadCount,

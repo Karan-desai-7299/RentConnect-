@@ -23,10 +23,13 @@ export default function Chat() {
   // Typing status
   const [isTyping, setIsTyping] = useState(false);
   const [otherUserTyping, setOtherUserTyping] = useState(false);
+  const [sending, setSending] = useState(false);
   
   // Ref for scroll behavior
   const messagesEndRef = useRef(null);
   const activeContactRef = useRef(null);
+  const pollRef = useRef(null);
+  const lastMessageIdRef = useRef(null);
 
   useEffect(() => {
     activeContactRef.current = activeContact;
@@ -177,24 +180,96 @@ export default function Chat() {
     fetchChatHistory();
   }, [activeContact]);
 
+  // Poll for new messages when socket is not available (Vercel serverless)
+  useEffect(() => {
+    if (!activeContact) {
+      if (pollRef.current) clearInterval(pollRef.current);
+      return;
+    }
+    if (socket?.connected) return; // Socket handles updates, no need to poll
+
+    // Poll every 3 seconds for new messages
+    pollRef.current = setInterval(() => {
+      api.get(`/api/v1/chat/history/${activeContact._id}?limit=50`)
+        .then((res) => {
+          if (res.data?.success && Array.isArray(res.data.data)) {
+            const fetched = res.data.data;
+            setMessages((prev) => {
+              // Only update if there are actually new messages
+              if (fetched.length !== prev.length) {
+                setTimeout(scrollToBottom, 50);
+                return fetched;
+              }
+              return prev;
+            });
+          }
+        })
+        .catch(() => {});
+    }, 3000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [activeContact, socket]);
+
   useEffect(() => {
     window.dispatchEvent(new Event("rentconnect:messages-read"));
   }, [activeContact, messages.length]);
 
-  // Send message
-  const handleSendMessage = (e) => {
+  // Send message — REST API primary (works on Vercel), socket as enhancement
+  const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (!text.trim() || !activeContact || !socket) return;
+    if (!text.trim() || !activeContact || sending) return;
 
-    socket.emit("sendMessage", {
-      receiverId: activeContact._id,
-      text: text.trim()
-    });
-
+    const messageText = text.trim();
     setText("");
-    // Stop typing emit
-    socket.emit("typing", { receiverId: activeContact._id, isTyping: false });
-    setIsTyping(false);
+    setSending(true);
+
+    // Optimistic update — show message immediately in UI
+    const optimisticMsg = {
+      _id: `temp-${Date.now()}`,
+      sender: user._id,
+      receiver: activeContact._id,
+      text: messageText,
+      seen: false,
+      createdAt: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setTimeout(scrollToBottom, 50);
+
+    try {
+      // Always use REST API to persist the message
+      const res = await api.post("/api/v1/chat/send", {
+        receiverId: activeContact._id,
+        text: messageText,
+      });
+
+      if (res.data?.success) {
+        const savedMsg = res.data.data;
+        // Replace optimistic message with real one from server
+        setMessages((prev) =>
+          prev.map((m) => (m._id === optimisticMsg._id ? savedMsg : m))
+        );
+        fetchConversations();
+
+        // If socket is connected, also emit for real-time delivery to receiver
+        if (socket?.connected) {
+          socket.emit("sendMessage", {
+            receiverId: activeContact._id,
+            text: messageText,
+          });
+          socket.emit("typing", { receiverId: activeContact._id, isTyping: false });
+          setIsTyping(false);
+        }
+      }
+    } catch (err) {
+      // Remove optimistic message on failure
+      setMessages((prev) => prev.filter((m) => m._id !== optimisticMsg._id));
+      setText(messageText); // Restore text
+      showToast("Failed to send message. Please try again.", "error");
+    } finally {
+      setSending(false);
+    }
   };
 
   // Handle local socket confirmation that message was sent
@@ -219,11 +294,11 @@ export default function Chat() {
     };
   }, [socket, activeContact]);
 
-  // Emit typing indicator
+  // Emit typing indicator (only when socket connected)
   const handleInputChange = (e) => {
     setText(e.target.value);
 
-    if (!socket || !activeContact) return;
+    if (!socket?.connected || !activeContact) return;
 
     if (!isTyping && e.target.value.length > 0) {
       setIsTyping(true);
@@ -241,7 +316,9 @@ export default function Chat() {
     }
   };
 
-  const isOnline = activeContact ? onlineUsers.includes(String(activeContact._id)) : false;
+  // Only show online status when socket is actually connected
+  const socketConnected = socket?.connected;
+  const isOnline = socketConnected && activeContact ? onlineUsers.includes(String(activeContact._id)) : false;
   const activeContactId = activeContact?._id ? String(activeContact._id) : "";
 
   return (
@@ -402,9 +479,15 @@ export default function Chat() {
                     placeholder="Type your message..."
                     value={text}
                     onChange={handleInputChange}
+                    disabled={sending}
                   />
                 </div>
-                <button type="submit" className="btn btn-primary btn-icon" style={{ borderRadius: "10px", minHeight: "44px" }}>
+                <button
+                  type="submit"
+                  className="btn btn-primary btn-icon"
+                  style={{ borderRadius: "10px", minHeight: "44px", opacity: sending ? 0.6 : 1 }}
+                  disabled={sending || !text.trim()}
+                >
                   <Send size={16} />
                 </button>
               </form>
