@@ -563,7 +563,8 @@ Key indexes for query performance:
 
 ## 📸 Screenshots
 
-> *(Add screenshots of Home, Search, Property Details, Owner Dashboard, and Chat here)*
+><img width="1897" height="887" alt="image" src="https://github.com/user-attachments/assets/7bfcdc3c-0bea-4c34-afec-fe410ad79da0" />
+ 
 
 ---
 
